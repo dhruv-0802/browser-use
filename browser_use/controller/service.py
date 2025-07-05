@@ -836,9 +836,22 @@ class Controller(Generic[Context]):
 		async def read_sheet_contents(page: Page):
 			# select all cells
 			await page.keyboard.press('Enter')
+			await asyncio.sleep(0.1)
 			await page.keyboard.press('Escape')
-			await page.keyboard.press('ControlOrMeta+A')
-			await page.keyboard.press('ControlOrMeta+C')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+J')
+			await asyncio.sleep(0.1)
+			await page.keyboard.type('A1')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Enter')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+A')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+C')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+C')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+C')
 
 			extracted_tsv = await page.evaluate('() => navigator.clipboard.readText()')
 			return ActionResult(extracted_content=extracted_tsv, include_in_memory=True)
@@ -885,10 +898,13 @@ class Controller(Generic[Context]):
 			await page.keyboard.press('Enter')  # make sure we dont delete current cell contents if we were last editing
 			await page.keyboard.press('Escape')  # to clear current focus (otherwise select range popup is additive)
 			await asyncio.sleep(0.1)
-			await page.keyboard.press('Home')  # move cursor to the top left of the sheet first
-			await page.keyboard.press('ArrowUp')
+			await page.keyboard.press('Control+J')
 			await asyncio.sleep(0.1)
-			await page.keyboard.press('Control+G')  # open the goto range popup
+			await page.keyboard.type('A1')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Enter')
+			await asyncio.sleep(0.1)
+			await page.keyboard.press('Control+J')  # open the goto range popup
 			await asyncio.sleep(0.2)
 			await page.keyboard.type(cell_or_range, delay=0.05)
 			await asyncio.sleep(0.2)
