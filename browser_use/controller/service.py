@@ -833,7 +833,7 @@ class Controller(Generic[Context]):
 				return ActionResult(error=error_msg, include_in_memory=True)
 
 		@self.registry.action('Google Sheets: Get the contents of the entire sheet', domains=['https://docs.google.com'])
-		async def read_sheet_contents(page: Page):
+		async def read_sheet_contents(cell_or_range: str,page: Page):
 			# select all cells
 			await page.keyboard.press('Enter')
 			await asyncio.sleep(0.1)
