@@ -101,6 +101,84 @@ class Agent(Generic[Context]):
 	browser_session: BrowserSession | None = None
 	_logger: logging.Logger | None = None
 
+	async def _ainvoke_with_retry_timeout(self, llm_instance, messages, request_interval=10, max_retries=3):
+		"""
+		Send LLM requests every 20 seconds (max 3), return first successful response.
+		"""
+		tasks = []
+		
+		try:
+			# Send requests with 20-second intervals
+			for attempt in range(max_retries):
+				# Start new request
+				self.logger.info(f"🔄 Starting LLM request attempt {attempt + 1}/{max_retries}")
+				task = asyncio.create_task(llm_instance.ainvoke(messages))
+				tasks.append(task)
+				
+				# Wait for any task to complete or timeout (except last attempt)
+				if attempt < max_retries - 1:
+					self.logger.debug(f"⏳ Waiting up to {request_interval}s for any request to complete...")
+					done, pending = await asyncio.wait(
+						tasks, 
+						timeout=request_interval, 
+						return_when=asyncio.FIRST_COMPLETED
+					)
+					
+					# Check if any task completed successfully
+					for completed_task in done:
+						try:
+							result = await completed_task
+							# Success! Cancel remaining and return
+							self.logger.info(f"✅ LLM request completed successfully! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
+							for t in tasks:
+								if not t.done():
+									t.cancel()
+							return result
+						except Exception as e:
+							# Task failed, remove from list and continue
+							self.logger.warning(f"❌ LLM request attempt failed: {str(e)}")
+							tasks.remove(completed_task)
+					
+					if pending:
+						self.logger.debug(f"⏰ {request_interval}s timeout reached, {len(pending)} requests still running")
+			
+			# All requests sent, wait for any remaining to complete
+			if tasks:
+				self.logger.info(f"🕐 All {max_retries} requests sent, waiting for any of {len(tasks)} remaining to complete...")
+				while tasks:
+					done, pending = await asyncio.wait(
+						tasks, 
+						return_when=asyncio.FIRST_COMPLETED
+					)
+					
+					for completed_task in done:
+						try:
+							result = await completed_task
+							# Success! Cancel remaining and return
+							self.logger.info(f"✅ LLM request completed successfully! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
+							for t in tasks:
+								if not t.done():
+									t.cancel()
+							return result
+						except Exception as e:
+							# Task failed, remove and continue
+							self.logger.warning(f"❌ LLM request attempt failed: {str(e)}")
+							tasks.remove(completed_task)
+			
+			# All tasks failed
+			self.logger.error(f"💥 All {max_retries} retry attempts failed")
+			raise Exception("All retry attempts failed")
+			
+		except Exception as e:
+			# Cancel all remaining tasks
+			remaining_count = len([t for t in tasks if not t.done()])
+			if remaining_count > 0:
+				self.logger.debug(f"🛑 Cancelling {remaining_count} remaining tasks due to error")
+			for task in tasks:
+				if not task.done():
+					task.cancel()
+			raise e
+
 	@time_execution_sync('--init')
 	def __init__(
 		self,
@@ -1075,7 +1153,8 @@ class Agent(Generic[Context]):
 		if self.tool_calling_method == 'raw':
 			self._log_llm_call_info(input_messages, self.tool_calling_method)
 			try:
-				output = await self.llm.ainvoke(input_messages)
+				output = await self._ainvoke_with_retry_timeout(self.llm, input_messages)
+				self.state.history.history[-1].metadata.input_tokens = output.usage.prompt_tokens
 				response = {'raw': output, 'parsed': None}
 			except Exception as e:
 				self.logger.error(f'Failed to invoke model: {str(e)}')
@@ -1096,7 +1175,7 @@ class Agent(Generic[Context]):
 		elif self.tool_calling_method is None:
 			structured_llm = self.llm.with_structured_output(self.AgentOutput, include_raw=True)
 			try:
-				response: dict[str, Any] = await structured_llm.ainvoke(input_messages)  # type: ignore
+				response: dict[str, Any] = await self._ainvoke_with_retry_timeout(structured_llm, input_messages)  # type: ignore
 				parsed: AgentOutput | None = response['parsed']
 
 			except Exception as e:
@@ -1106,7 +1185,7 @@ class Agent(Generic[Context]):
 		else:
 			self._log_llm_call_info(input_messages, self.tool_calling_method)
 			structured_llm = self.llm.with_structured_output(self.AgentOutput, include_raw=True, method=self.tool_calling_method)
-			response: dict[str, Any] = await structured_llm.ainvoke(input_messages)  # type: ignore
+			response: dict[str, Any] = await self._ainvoke_with_retry_timeout(structured_llm, input_messages)  # type: ignore
 
 		# Handle tool call responses
 		if response.get('parsing_error') and 'raw' in response:
@@ -1575,7 +1654,7 @@ class Agent(Generic[Context]):
 			reason: str
 
 		validator = self.llm.with_structured_output(ValidationResult, include_raw=True)
-		response: dict[str, Any] = await validator.ainvoke(msg)  # type: ignore
+		response: dict[str, Any] = await self._ainvoke_with_retry_timeout(validator, msg)  # type: ignore
 		parsed: ValidationResult = response['parsed']
 		is_valid = parsed.is_valid
 		if not is_valid:
@@ -1853,7 +1932,7 @@ class Agent(Generic[Context]):
 
 		# Get planner output
 		try:
-			response = await self.settings.planner_llm.ainvoke(planner_messages)
+			response = await self._ainvoke_with_retry_timeout(self.settings.planner_llm, planner_messages)
 		except Exception as e:
 			self.logger.error(f'Failed to invoke planner: {str(e)}')
 			# Extract status code if available (e.g., from HTTP exceptions)
