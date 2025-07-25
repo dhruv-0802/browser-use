@@ -105,6 +105,10 @@ class Agent(Generic[Context]):
 		"""
 		Send LLM requests every 20 seconds (max 3), return first successful response.
 		"""
+		import time
+		start_time = time.time()
+		self.logger.debug(f"🚀 Starting LLM retry process (max {max_retries} attempts, {request_interval}s intervals)")
+		
 		tasks = []
 		
 		try:
@@ -129,7 +133,8 @@ class Agent(Generic[Context]):
 						try:
 							result = await completed_task
 							# Success! Cancel remaining and return
-							self.logger.info(f"✅ LLM request completed successfully! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
+							elapsed_time = time.time() - start_time
+							self.logger.info(f"✅ LLM request completed successfully in {elapsed_time:.2f}s! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
 							for t in tasks:
 								if not t.done():
 									t.cancel()
@@ -155,7 +160,8 @@ class Agent(Generic[Context]):
 						try:
 							result = await completed_task
 							# Success! Cancel remaining and return
-							self.logger.info(f"✅ LLM request completed successfully! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
+							elapsed_time = time.time() - start_time
+							self.logger.info(f"✅ LLM request completed successfully in {elapsed_time:.2f}s! Cancelling {len([t for t in tasks if not t.done()])} remaining tasks")
 							for t in tasks:
 								if not t.done():
 									t.cancel()
@@ -166,7 +172,8 @@ class Agent(Generic[Context]):
 							tasks.remove(completed_task)
 			
 			# All tasks failed
-			self.logger.error(f"💥 All {max_retries} retry attempts failed")
+			elapsed_time = time.time() - start_time
+			self.logger.error(f"💥 All {max_retries} retry attempts failed after {elapsed_time:.2f}s")
 			raise Exception("All retry attempts failed")
 			
 		except Exception as e:
@@ -177,6 +184,8 @@ class Agent(Generic[Context]):
 			for task in tasks:
 				if not task.done():
 					task.cancel()
+			elapsed_time = time.time() - start_time
+			self.logger.error(f"❌ LLM retry process failed after {elapsed_time:.2f}s: {str(e)}")
 			raise e
 
 	@time_execution_sync('--init')
